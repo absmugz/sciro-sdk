@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Sciro SDK Inline</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; padding: 16px; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+    #debug {
+      width: 420px;
+      max-width: 100%;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 12px;
+      background: #fafafa;
+      font-size: 12px;
+    }
+    #log {
+      height: 260px;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid #eee;
+      border-radius: 10px;
+      padding: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      white-space: pre-wrap;
+    }
+    .pill { display: inline-block; padding: 4px 8px; border-radius: 999px; border: 1px solid #e5e5e5; background: #fff; margin-right: 6px; }
+    button { padding: 8px 10px; border-radius: 10px; border: 1px solid #ddd; background: #fff; cursor: pointer; }
+    button:hover { background: #f5f5f5; }
+    .muted { color: #666; }
+
+    /* Optional: if you want to provide your own container, Sciro will mount here */
+    #sciro-alert-root{
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      width: 360px;
+      max-width: calc(100vw - 32px);
+      z-index: 9999;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>Sciro SDK Demo</h2>
+  <p class="muted">
+    This page logs video events + Sciro insights. Try rewinding twice (more than ~2.5s each) within 60s.
+  </p>
+
+  <div class="row">
+    <div>
+      <video id="lessonVideo" width="640" controls>
+        <source src="lesson.mp4" type="video/mp4" />
+      </video>
+    </div>
+
+    <div id="debug">
+      <div style="margin-bottom:10px;">
+        <span class="pill">Rewinds: <b id="rewindsCount">0</b></span>
+        <span class="pill">Last seek Δ: <b id="seekDelta">-</b></span>
+        <span class="pill">Last insight: <b id="lastInsight">-</b></span>
+      </div>
+
+      <div style="display:flex; gap:8px; margin-bottom:10px;">
+        <button id="clearLogBtn">Clear log</button>
+        <button id="toggleUiBtn">Disable Sciro UI</button>
+      </div>
+
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <!-- Custom UI mount target (optional, but recommended so you control placement) -->
+  <div id="sciro-alert-root"></div>
+
+  <script src="sciro.js"></script>
+
+  <script>
+    const video = document.getElementById("lessonVideo")
+
+    const elLog = document.getElementById("log")
+    const elRewinds = document.getElementById("rewindsCount")
+    const elSeekDelta = document.getElementById("seekDelta")
+    const elLastInsight = document.getElementById("lastInsight")
+    const clearLogBtn = document.getElementById("clearLogBtn")
+    const toggleUiBtn = document.getElementById("toggleUiBtn")
+
+    let uiEnabled = true
+    let uiRewindCount = 0
+    let lastStableTime = 0
+    let seekFrom = null
+
+    function log(msg, data) {
+      const time = new Date().toLocaleTimeString()
+      const line = data ? `[${time}] ${msg} ${JSON.stringify(data)}` : `[${time}] ${msg}`
+      console.log(line)
+      elLog.textContent = line + "\n" + elLog.textContent
+    }
+
+    clearLogBtn.addEventListener("click", () => {
+      elLog.textContent = ""
+      log("Log cleared")
+    })
+
+    toggleUiBtn.addEventListener("click", () => {
+      uiEnabled = !uiEnabled
+      toggleUiBtn.textContent = uiEnabled ? "Disable Sciro UI" : "Enable Sciro UI"
+      log(`Sciro UI ${uiEnabled ? "enabled" : "disabled"}`)
+    })
+
+    // ---- Video-level logging (independent of Sciro) ----
+    video.addEventListener("loadedmetadata", () =>
+      log("video.loadedmetadata", { duration: Number(video.duration.toFixed(2)) })
+    )
+
+    video.addEventListener("play", () => log("video.play", { t: Number(video.currentTime.toFixed(2)) }))
+    video.addEventListener("pause", () => log("video.pause", { t: Number(video.currentTime.toFixed(2)) }))
+
+    video.addEventListener("timeupdate", () => {
+      lastStableTime = video.currentTime
+    })
+
+    video.addEventListener("seeking", () => {
+      if (seekFrom === null) seekFrom = lastStableTime
+      log("video.seeking", { from: Number(seekFrom.toFixed(2)), to: Number(video.currentTime.toFixed(2)) })
+    })
+
+    video.addEventListener("seeked", () => {
+      const to = video.currentTime
+      const from = seekFrom ?? lastStableTime
+      const delta = (from - to)
+      seekFrom = null
+
+      elSeekDelta.textContent = delta.toFixed(2) + "s"
+      log("video.seeked", { from: Number(from.toFixed(2)), to: Number(to.toFixed(2)), delta: Number(delta.toFixed(2)) })
+    })
+
+    // ---- Sciro init ----
+    Sciro.init({
+      videoElement: video,
+
+      // Optional metadata you can pass in (can be dynamic in real apps)
+      userId: "user_123",
+      topic: "Algebra: Quadratics",
+      lessonId: "lesson_mp4_01",
+      sessionId: (crypto.randomUUID?.() || String(Date.now())),
+
+      // Optional webhook endpoint
+      // Leave as null/undefined to simulate (console log only)
+      apiEndpoint: null,
+      // apiEndpoint: "https://your-api.com/sciro-events",
+
+      // ✅ Custom UI renderer (integrator controlled)
+      ui: {
+        containerId: "sciro-alert-root",
+        autoDismissMs: 15000,
+        onAction: (action, insight) => log("UI action", { action, state: insight.state, confidence: insight.confidence }),
+        render: ({ insight }) => {
+          // Allow toggling UI without changing SDK
+          if (!uiEnabled) return ""
+
+          const t = insight.last_rewind?.toTime ?? insight.video_current_time ?? 0
+          const rewinds = insight.rewinds ?? 0
+
+          return `
+            <div style="
+              padding:14px;
+              border-radius:16px;
+              background:#0b1220;
+              color:#fff;
+              border:1px solid rgba(255,255,255,.12);
+              box-shadow:0 10px 30px rgba(0,0,0,.35);
+            ">
+              <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;">
+                <div style="font-weight:700;">Looks like you’re stuck</div>
+                <button data-sciro="dismiss" style="
+                  border:0;background:transparent;color:#fff;cursor:pointer;font-size:16px;
+                ">✕</button>
+              </div>
+
+              <div style="margin-top:6px;opacity:.85;font-size:13px;line-height:1.35;">
+                We noticed <b>${rewinds}</b> rewinds in the last minute around <b>${Number(t).toFixed(0)}s</b>.
+                Want help?
+              </div>
+
+              <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                <button data-sciro="show_example" style="
+                  padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.2);
+                  background:rgba(255,255,255,.12);color:#fff;cursor:pointer;
+                ">Show example</button>
+
+                <button data-sciro="hint_mode" style="
+                  padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.2);
+                  background:rgba(255,255,255,.12);color:#fff;cursor:pointer;
+                ">Hint mode</button>
+
+                <button data-sciro="dismiss" style="
+                  padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.2);
+                  background:rgba(255,255,255,.12);color:#fff;cursor:pointer;
+                ">Not now</button>
+              </div>
+
+              <div style="margin-top:10px;font-size:11px;opacity:.6;">
+                state=${insight.state} • confidence=${insight.confidence} • session=${insight.session_id || "n/a"}
+              </div>
+            </div>
+          `
+        }
+      },
+
+      onInsight: (insight) => {
+        // Update debug UI
+        elLastInsight.textContent = `${insight.state} (${insight.confidence})`
+
+        if (typeof insight.rewinds === "number") {
+          uiRewindCount = insight.rewinds
+          elRewinds.textContent = uiRewindCount
+        }
+
+        log("Sciro Insight", insight)
+      }
+    })
+
+    log("Sciro.init done ✅")
+  </script>
+
+</body>
+</html>
