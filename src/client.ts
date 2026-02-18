@@ -141,7 +141,7 @@ export class SciroClient {
   async deleteData(itemId: string): Promise<SciroResponse<void>> {
     const response = await this.httpClient.delete(`/data/${itemId}`);
     return {
-      data: undefined as any,
+      data: undefined!,
       status: response.status,
     };
   }

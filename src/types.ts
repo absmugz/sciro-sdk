@@ -59,7 +59,7 @@ export interface User {
 export interface DataItem {
   id: string;
   name: string;
-  value: any;
+  value: unknown;
   createdAt: string;
   updatedAt: string;
 }
